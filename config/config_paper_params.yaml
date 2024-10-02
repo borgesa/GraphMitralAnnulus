@@ -1,0 +1,170 @@
+# Base config for unet based training
+meta:
+    working_dir: "."
+    float32_matmul_precision: "medium"
+    metrics_threshold: 10
+    plotting_frequency: 100
+    pixel_to_mm: 0.703125  # 90mm/128px
+    normalized_to_mm: 90   # 90mm/1
+
+paths:
+    base_path: "<base path>"
+    shape_template: &shape_template_path "./initial_shape.ptt"
+
+
+graph_config: &graph_config
+    _target_: mvq_graph_model.model.settings.GraphModelSettings
+    n_encoder_f_maps: &n_encoder_f_maps 16  # NB: equal encoder 'num_classes'
+    n_graph_features: 0  # NB: Will be added (e.g. angles ++)
+    num_gcn_in_block: 4
+    hidden_dim: 32
+
+model_encoder: &model_encoder
+    _target_: mvq_graph_model.model.unet3.Custom3DUNet
+    input_channels: 1
+    output_channels: [256, 128, 64, 32]
+    num_classes: *n_encoder_f_maps
+    activation: "none"
+    upsampling_type: "trilinear"
+    deep_supervision: True
+    t_pad: 0
+    us_features: True
+    context: 20.0
+
+model_graph_global: &model_graph_global
+    _target_: mvq_graph_model.model.gcn_model.GlobalGraphLayer
+    settings: *graph_config
+    points_per_dim: 8
+    out_dim_graph: 7
+    detached_feature_map: True
+    shape_template:
+        _target_: mvq_graph_model.model.utils.load_shape_template
+        path: *shape_template_path
+
+model_graph_local: &model_graph_local
+    _target_: mvq_graph_model.model.gcn_model.LocalGraphLayer
+    settings: *graph_config
+    num_local_layers: 3
+    detached_feature_map: True
+    shape_template:
+        _target_: mvq_graph_model.model.utils.load_shape_template
+        path: *shape_template_path
+
+model:
+    _target_: torch.nn.Sequential
+    _args_:
+        - *model_encoder
+        - *model_graph_global
+        - *model_graph_local
+
+loss:
+    focal_gamma: 2.0
+
+    c2c_loss:
+        gamma: 2.0
+
+    weights:
+        loss_gcn_global: 2.0
+        loss_gcn_local: 4.0
+        loss_cnn: 1.0
+        loss_cnn_aorta: 0.5
+        loss_c2c_global: 1.0
+        loss_c2c_local: 1.0
+
+    first_epoch:
+        loss_gcn_global: 2
+        loss_gcn_local: 3
+        loss_cnn: 0
+        loss_cnn_aorta: 0
+        loss_c2c_global: 2
+        loss_c2c_local: 3
+
+    warm_up_scaling_gamma: 2.0
+
+    warm_up_length:
+        loss_gcn_global: 3
+        loss_gcn_local: 5
+        loss_cnn: 1
+        loss_cnn_aorta: 1
+        loss_c2c_global: 5
+        loss_c2c_local: 3
+
+trainer:
+    _target_: lightning.pytorch.Trainer
+    max_epochs: 1000
+    devices: 1
+    deterministic: False
+    accelerator: "auto"
+    accumulate_grad_batches: 1
+    gradient_clip_val: 1
+    gradient_clip_algorithm: norm
+    enable_checkpointing: True
+    enable_model_summary: True
+    # limit_train_batches: 500
+    num_sanity_val_steps: 2
+    precision: 32 # 16-mixed
+    callbacks:
+        - _target_: lightning.pytorch.callbacks.ModelCheckpoint
+          monitor: 'metric/val_c2c_out'  # Evaluate selecting on part of loss
+          save_top_k: 2
+          mode: min
+          auto_insert_metric_name: True
+          save_weights_only: False
+        - _target_: mvq_graph_model.utils.callbacks.SaveLatestCheckpointCallback
+        - _target_: mvq_graph_model.utils.callbacks.RandomValBatchCallback
+          num_vis_per_epoch: 1  # Currently stored w/global step so effectively max 1
+    logger:
+        _target_: lightning.pytorch.loggers.TensorBoardLogger
+        save_dir: "<set save path>"
+
+
+
+datamodule:
+    _target_: mvq_graph_model.modules.data.MVQDataModule
+    data_dir: '<set dataset path>'
+    batch_size: 8
+    train_epoch_size: 512
+
+training:
+
+    optimizer:
+        _target_: torch.optim.AdamW
+        lr: 5e-4
+        weight_decay: 1e-3
+
+    augmentation:
+        -   _target_: mvq_graph_model.utils.data_and_loss.CutAndDrop
+            keys: 'volume'
+            p: 0.2
+            enabled: 0.5
+
+
+logger:
+    -   sink:  sys.stderr
+        level: INFO
+        enqueue: True
+        backtrace: False
+
+    -   sink:  error.log
+        level: ERROR
+        enqueue: True
+        backtrace: True
+        diagnose: True
+
+    -   sink:  warning.log
+        level: WARNING
+        enqueue: True
+        backtrace: False
+        diagnose: False
+
+    -   sink:  info.log
+        level: INFO
+        enqueue: True
+        backtrace: False
+        diagnose: False
+
+    -   sink:  debug.log
+        level: INFO
+        enqueue: True
+        backtrace: True
+        diagnose: True
