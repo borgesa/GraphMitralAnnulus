@@ -1,0 +1,10 @@
+# Ignore Python bytecode
+*.pyc
+__pycache__/
+
+# Ignore JetBrains IDE project files
+.idea/
+
+# Ignore macOS system files
+.DS_Store
+
