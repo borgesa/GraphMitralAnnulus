@@ -33,6 +33,10 @@ for introducing anatomical template structures in medical segmentation tasks.
 ## Example results figure:
 ![Example results](./figures/figure2.png "Example results")
 
+## Acknowledgement 
+The research presented in this paper has benefited from the Experimental Infrastructure for Exploration of Exascale Computing (eX3),
+which is financially supported by the Research Council of Norway under contract 270053.
+
 
 ## Get started:
 The code uses Poetry for package handling.
